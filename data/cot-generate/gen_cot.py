@@ -426,8 +426,8 @@ def main():
     parser.add_argument("--num_threads", type=int, default=1, help="Number of threads to use")
     parser.add_argument("--max_num", type=int, default=None, help="Maximum number of tasks to process")
     parser.add_argument("--no_auto_merge", action='store_true', help="Disable automatic merging of results")
-    parser.add_argument("--port", type=str, default='7100')
     parser.add_argument("--timestamp", type=str)
+    parser.add_argument("--port", type=str, default='7100')
     
     args = parser.parse_args()
 
