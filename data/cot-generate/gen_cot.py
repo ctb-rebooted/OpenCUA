@@ -10,12 +10,16 @@ import concurrent.futures
 from loguru import logger
 from typing import List
 from PIL import Image
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from utils import (
     load_image, 
     image_to_base64,    
     draw_bounding_box_and_crop_patch,
     call_llm,
+    call_docenty_opencua,
     )
 from module.evaluator import (
     TRAJECTORY_EVAL_FORMAT_PROMPT, 
@@ -57,6 +61,7 @@ def generate_all_history(generated_steps):
 def generate_cot(
     client, 
     model:str,
+    port:str,
     goal: str, 
     generated_steps: List[dict], 
     current_step_value: dict, 
@@ -115,7 +120,7 @@ def generate_cot(
                     "content": content,
                 }
             ]
-        response = call_llm(client, messages, model=model)
+        response, response_org = call_docenty_opencua(messages, model=model, port=port)
 
         logger.info(f"Generator response: {response}")
 
@@ -134,7 +139,8 @@ def generate_cot(
                         "content": {"type": "text", "text": DOUBLE_CHECK_PROMPT}, 
                     }
                 ]
-            response = call_llm(client, messages, model=model)
+            response, response_org = call_docenty_opencua(messages, model=model, port=port)
+
             logger.info(f"Double Check Response: {response}")
 
         current_step = current_step_value.copy()
@@ -204,7 +210,7 @@ def generate_cot(
     max_tries=2,  # Limit the number of retries to prevent infinite loops
     jitter=backoff.full_jitter,  # Add jitter to spread out retry attempts
 )
-def generate_traj_eval(generated_steps, goal, client, model):
+def generate_traj_eval(generated_steps, goal, client, model, port):
     try:
         content = [
             {"type": "text", "text": TRAJECTORY_EVAL_FORMAT_PROMPT.format(goal=goal, steps=generate_traj_eval_history(generated_steps))+"\n\n"+FINAL_TRAJECTORY_EVAL_PROMPT,   }
@@ -215,7 +221,8 @@ def generate_traj_eval(generated_steps, goal, client, model):
                 "content": content,
             }
         ]
-        response_str = call_llm(client, messages, model=model)
+        response_str, response_org = call_docenty_opencua(messages, model=model, port=port)
+
         logger.info(f"Trajectory Evaluation: {response_str}")
         if "```json" in response_str:
             response_str = response_str.split("```json")[1].split("```")[0].strip()
@@ -236,7 +243,7 @@ def generate_traj_eval(generated_steps, goal, client, model):
         raise
 
 
-def process_traj(task, task_id, output_dir, image_folder, model:str, need_double_check=False, with_prior_judge=False):
+def process_traj(task, task_id, output_dir, image_folder, model:str, port:str, need_double_check=False, with_prior_judge=False):
     if "claude" in model.lower():
         base_url = "https://api.anthropic.com/v1/"
     elif "gpt" in model.lower():
@@ -248,8 +255,8 @@ def process_traj(task, task_id, output_dir, image_folder, model:str, need_double
     else:
         raise ValueError(f"Unsupported model: {model}. Please use a valid model name.")
     
-    client=OpenAI(
-        api_key=os.getenv('API_KEY'),
+    client = OpenAI(
+        api_key=os.getenv('OPENAI_API_KEY'),
         base_url = base_url
     ) 
 
@@ -289,6 +296,7 @@ def process_traj(task, task_id, output_dir, image_folder, model:str, need_double
             response = generate_cot(
                 client = client, 
                 model = model,
+                port = port,
                 goal = goal, 
                 generated_steps=generated_steps, 
                 current_step_value=step['value'], 
@@ -314,7 +322,7 @@ def process_traj(task, task_id, output_dir, image_folder, model:str, need_double
 
             if len(generated_steps) == len(trajectory): 
                 logger.info("Generating trajectory evaluation...")
-                eval_result = generate_traj_eval(generated_steps, goal, client, model)
+                eval_result = generate_traj_eval(generated_steps, goal, client, model, port)
                 with open(os.path.join(output_dir, "meta.json"), "r") as f:
                     meta = json.load(f)
                 meta.update(eval_result)
@@ -330,7 +338,7 @@ def process_traj(task, task_id, output_dir, image_folder, model:str, need_double
 
 # 在 gen_cot.py 文件末尾的 gen_inner_monologue_mt 函数中添加合并调用
 
-def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-7-sonnet-20250219", num_threads = 10, max_num = None, need_double_check=False, with_prior_judge=False, auto_merge=True):
+def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-7-sonnet-20250219", num_threads = 10, max_num = None, need_double_check=False, with_prior_judge=False, auto_merge=True, port='7100'):
     """
     Generate inner monologue with multi-threading support.
     
@@ -372,16 +380,12 @@ def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-
         tasks = required_tasks[:max_num]
     else:
         tasks = required_tasks
-
-    logger.info(f"Total tasks: {len(tasks)}")
-    logger.info(f"Tasks already done: {done_tasks_count}")
-    logger.info(f"Tasks to continue: {continue_task_count}")
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = []
         for task in tasks:  
             task_id = task['task_id']        
-            futures.append(executor.submit(process_traj, task, task_id, output_dir, image_folder, model, need_double_check, with_prior_judge))
+            futures.append(executor.submit(process_traj, task, task_id, output_dir, image_folder, model, port, need_double_check, with_prior_judge))
 
         for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
             _ = future.result()
@@ -422,11 +426,16 @@ def main():
     parser.add_argument("--num_threads", type=int, default=1, help="Number of threads to use")
     parser.add_argument("--max_num", type=int, default=None, help="Maximum number of tasks to process")
     parser.add_argument("--no_auto_merge", action='store_true', help="Disable automatic merging of results")
+    parser.add_argument("--port", type=str, default='7100')
+    parser.add_argument("--timestamp", type=str)
     
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
+    LOGGER_PATH = os.path.join(args.output_dir, f"{args.timestamp}")
+    logger.add(LOGGER_PATH, level="INFO")
 
+    del args.timestamp
     # Convert args to dict and call the function
     kwargs = dict(args._get_kwargs())
     kwargs['auto_merge'] = not kwargs.pop('no_auto_merge')  # Invert the flag

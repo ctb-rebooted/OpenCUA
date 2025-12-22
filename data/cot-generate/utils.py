@@ -2,10 +2,12 @@ import re
 import os
 import backoff
 import math
+import httpx
 import base64
 from io import BytesIO
 from loguru import logger
 from PIL import Image, ImageDraw
+import datetime 
 
 def clean_invalid_json_escapes(s: str) -> str:
     if s is None:
@@ -107,6 +109,7 @@ def call_llm(
     model,
     temperature = 0,
     ):
+
     try:
         response = client.chat.completions.create(
             model=model,
@@ -118,6 +121,69 @@ def call_llm(
     except Exception as e:
         logger.exception(f"Retrying... Error calling LLM: {str(e)}")
         raise
+
+
+@backoff.on_exception(
+    backoff.expo,
+    (httpx.HTTPError, httpx.TimeoutException, httpx.ConnectError),
+    max_tries=5,
+    max_time=300,
+    jitter=backoff.full_jitter,  # Add jitter to spread out retry attempts
+    )
+def call_docenty_opencua(messages, model:str, port:str):
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0,
+        "top_p": 0.9,
+        "max_tokens": 2048,
+        "stream": False
+    }
+
+    headers = {
+    "Content-Type": "application/json",
+    }
+
+    url = f"http://127.0.0.1:{port}/v1/chat/completions"
+
+    try:
+        response = httpx.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=500.0,
+            verify=False
+        )            
+        
+        if response.status_code != 200:
+            error_msg = f"Failed to call VLM server: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+            response.raise_for_status()
+        
+        response_json = response.json()
+        finish_reason = response_json["choices"][0].get("finish_reason")
+        
+        if finish_reason is not None and finish_reason == "stop":
+            return response_json['choices'][0]['message']['content'], response
+        else:
+            logger.warning(f"LLM did not finish properly (finish_reason: {finish_reason}), but returning content anyway")
+            return response_json['choices'][0]['message']['content'], response
+                
+    except httpx.HTTPError as e:
+        print(f"HTTP error calling VLM server: {e}")
+        raise
+    except Exception as e:
+        print(f"Unexpected error calling VLM server: {e}")
+        raise
+
+def get_timestamp():
+    datetime.datetime.today()
+    datetime.datetime.now() 
+
+    now = datetime.datetime.now()
+    return now.strftime("%Y-%m-%d_%H-%M-%S")
+
 
 def load_image(image_name, image_folder=None):
     if image_folder is None:

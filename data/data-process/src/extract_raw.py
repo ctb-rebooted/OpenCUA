@@ -9,6 +9,7 @@ import numpy as np
 import cv2
 from PIL import Image
 from tqdm import tqdm
+from loguru import logger
 
 from src.utils.image import encode_image
 
@@ -157,7 +158,12 @@ def process_single_directory(basedir: str, episode_dir: str, load_image: bool) -
 
         with open(vis_events_path, encoding="utf-8-sig") as f:
             num_lines = sum(1 for _ in f)
+
+            print(f"length of complete_events : {len(complete_events)}")
+            print(f"num_lines : {num_lines}")
+
             if num_lines != len(complete_events):
+                print("*"*10 + "Mismatch!!" + "*"*10)
                 return None
 
         last_time_stamp = None
@@ -241,7 +247,8 @@ def process_single_directory(basedir: str, episode_dir: str, load_image: bool) -
         if len(events) == 0:
             return None
         return raw_traj
-    except Exception:
+    except Exception as e:
+        print(e)
         return None
 
 
@@ -253,6 +260,8 @@ def get_raw_examples(basedir: str, num_samples: int = -1, load_image: bool = Tru
     raw: List[Dict[str, Any]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
         futures = list(tqdm(executor.map(process_dir, directories), total=len(directories), desc="Processing directories"))
+        print("="*10 + "futures" + "="*10)
+        print(len(futures))
         raw = [result for result in futures if result is not None]
     return raw
 
@@ -267,6 +276,9 @@ def main():
 
     os.makedirs(os.path.join("datasets"), exist_ok=True)
     raw_examples = get_raw_examples(args.raw_dir, num_samples=args.num_samples, load_image=not args.no_image)
+
+    print(f"sample_raw : {args.sample_raw}")
+    print(f"raw_dir : {args.raw_dir}")
 
     if args.sample_raw.endswith(".json"):
         with open(args.sample_raw, "w", encoding="utf-8") as f:

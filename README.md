@@ -65,7 +65,7 @@ establishing a new state-of-the-art (SOTA) among open-source models.
 
 ### Installation & Download
 
-First, install the required transformers dependencies:
+install the required transformers dependencies:
 
 ```bash
 conda create -n opencua python=3.10
