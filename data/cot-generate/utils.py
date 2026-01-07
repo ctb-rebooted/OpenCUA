@@ -2,6 +2,7 @@ import re
 import os
 import backoff
 import math
+import json
 import httpx
 import base64
 from io import BytesIO
@@ -130,7 +131,7 @@ def call_llm(
     max_time=300,
     jitter=backoff.full_jitter,  # Add jitter to spread out retry attempts
     )
-def call_docenty_opencua(messages, model:str, port:str):
+def call_docenty_opencua(messages, model:str, server_addr:str, port:str):
 
     payload = {
         "model": model,
@@ -145,7 +146,16 @@ def call_docenty_opencua(messages, model:str, port:str):
     "Content-Type": "application/json",
     }
 
-    url = f"http://127.0.0.1:{port}/v1/chat/completions"
+    url = f"http://{server_addr}:{port}/v1/chat/completions"
+
+
+    logger.info("Debugging messages")
+    current_datetime = datetime.datetime.now()
+    dir_path = os.path.join('model_log', model)
+    os.makedirs(dir_path, exist_ok=True)
+    file_path = f"./{dir_path}/{current_datetime}_messages.json"
+    with open(file_path, "w") as json_file:
+        json.dump(messages, json_file, indent=4)
 
     try:
         response = httpx.post(

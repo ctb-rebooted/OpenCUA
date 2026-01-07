@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from utils import image_to_base64, call_llm
+from utils import image_to_base64, call_docenty_opencua
 import backoff
 import orjson
 
@@ -98,14 +98,14 @@ def build_reflection_messages(task: str, history_steps: str, current_step: dict,
     jitter=backoff.full_jitter,  # Add jitter to spread out retry attempts
 )
 def gen_reflection_thought_with_prior_judge(
-        client, 
         model: str,
         goal: str, 
         history_steps: str, 
         current_step: dict, 
-        image, 
+        port: str,
+        image,
         image_patch=None, 
-        next_image=None
+        next_image=None,
     ) -> dict:
     """
     Parse a structured LLM response containing JSON code blocks. If the response
@@ -123,8 +123,8 @@ def gen_reflection_thought_with_prior_judge(
         next_image=next_image
     )
 
-    response_str = call_llm(client, messages=reflection_messages, model=model, temperature=0)
-    print("\nReflection Thought:")
+    response_str, response_org = call_docenty_opencua(messages=reflection_messages, model=model, port=port)
+    print("\nReflection Thought in reflector_with_prior_judge:")
     print(response_str)
 
     # If the response contains a ```json block, extract the JSON content

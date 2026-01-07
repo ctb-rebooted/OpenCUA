@@ -1,7 +1,7 @@
 import json
 import os
 import traceback
-import re
+import datetime 
 import backoff
 import orjson
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
@@ -59,8 +59,10 @@ def generate_all_history(generated_steps):
     jitter=backoff.full_jitter,  # Add jitter to spread out retry attempts
 )
 def generate_cot(
-    client, 
+    client,
+    index:int,
     model:str,
+    server_addr: str,
     port:str,
     goal: str, 
     generated_steps: List[dict], 
@@ -74,6 +76,7 @@ def generate_cot(
     ) -> dict:
 
     try:
+        logger.info(f"{index}th generate_cot call")
         current_action = current_step_value['code']
         if not generated_steps:
             last_step_correct = True
@@ -114,13 +117,13 @@ def generate_cot(
         if image_patch is not None:
             content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_to_base64(image_patch)}", "detail": "high"}})
         
-        messages=[
+        messages = [
                 {
                     "role": "user",
                     "content": content,
                 }
             ]
-        response, response_org = call_docenty_opencua(messages, model=model, port=port)
+        response, response_org = call_docenty_opencua(messages, model=model, server_addr=server_addr, port=port)
 
         logger.info(f"Generator response: {response}")
 
@@ -136,10 +139,11 @@ def generate_cot(
                     },
                     {
                         "role": "user",
-                        "content": {"type": "text", "text": DOUBLE_CHECK_PROMPT}, 
+                        "content": DOUBLE_CHECK_PROMPT, 
                     }
                 ]
-            response, response_org = call_docenty_opencua(messages, model=model, port=port)
+            logger.info(f"Calling Double Check")
+            response, response_org = call_docenty_opencua(messages, model=model, server_addr=server_addr, port=port)
 
             logger.info(f"Double Check Response: {response}")
 
@@ -150,28 +154,30 @@ def generate_cot(
         if not skip_reflection:
             if with_prior_judge:
                 reflect_response = gen_reflection_thought_with_prior_judge(
-                    client, 
                     model=model,
                     goal=goal,
                     history_steps=history_steps,
                     current_step=current_step,
+                    port=port,
                     image=image,
                     image_patch=image_patch,
-                    next_image=next_image,
+                    next_image=next_image
                     )
             else:
                 reflect_response = gen_reflection_thought(
-                    client, 
+                    client,
                     model=model,
                     goal=goal,
                     history_steps=history_steps,
                     current_step=current_step,
+                    port=port,
                     image=image,
                     image_patch=image_patch,
                     next_image=next_image,
                     )
 
             if with_prior_judge:
+                current_step['last_step_correct'] = True
                 current_step['last_step_redundant'] = not current_step['last_step_correct']
                 current_step['reflection'] = reflect_response['reflection']
             else:
@@ -210,7 +216,7 @@ def generate_cot(
     max_tries=2,  # Limit the number of retries to prevent infinite loops
     jitter=backoff.full_jitter,  # Add jitter to spread out retry attempts
 )
-def generate_traj_eval(generated_steps, goal, client, model, port):
+def generate_traj_eval(generated_steps, goal, client, model, server_addr, port):
     try:
         content = [
             {"type": "text", "text": TRAJECTORY_EVAL_FORMAT_PROMPT.format(goal=goal, steps=generate_traj_eval_history(generated_steps))+"\n\n"+FINAL_TRAJECTORY_EVAL_PROMPT,   }
@@ -221,7 +227,7 @@ def generate_traj_eval(generated_steps, goal, client, model, port):
                 "content": content,
             }
         ]
-        response_str, response_org = call_docenty_opencua(messages, model=model, port=port)
+        response_str, response_org = call_docenty_opencua(messages, model=model, server_addr=server_addr, port=port)
 
         logger.info(f"Trajectory Evaluation: {response_str}")
         if "```json" in response_str:
@@ -243,7 +249,7 @@ def generate_traj_eval(generated_steps, goal, client, model, port):
         raise
 
 
-def process_traj(task, task_id, output_dir, image_folder, model:str, port:str, need_double_check=False, with_prior_judge=False):
+def process_traj(task, task_id, output_dir, image_folder, model:str, server_addr:str, port:str, need_double_check=False, with_prior_judge=False):
     if "claude" in model.lower():
         base_url = "https://api.anthropic.com/v1/"
     elif "gpt" in model.lower():
@@ -294,8 +300,10 @@ def process_traj(task, task_id, output_dir, image_folder, model:str, port:str, n
                 continue
             
             response = generate_cot(
-                client = client, 
+                client,
+                index=i,
                 model = model,
+                server_addr = server_addr, 
                 port = port,
                 goal = goal, 
                 generated_steps=generated_steps, 
@@ -322,7 +330,7 @@ def process_traj(task, task_id, output_dir, image_folder, model:str, port:str, n
 
             if len(generated_steps) == len(trajectory): 
                 logger.info("Generating trajectory evaluation...")
-                eval_result = generate_traj_eval(generated_steps, goal, client, model, port)
+                eval_result = generate_traj_eval(generated_steps, goal, client, model, server_addr, port)
                 with open(os.path.join(output_dir, "meta.json"), "r") as f:
                     meta = json.load(f)
                 meta.update(eval_result)
@@ -338,7 +346,7 @@ def process_traj(task, task_id, output_dir, image_folder, model:str, port:str, n
 
 # 在 gen_cot.py 文件末尾的 gen_inner_monologue_mt 函数中添加合并调用
 
-def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-7-sonnet-20250219", num_threads = 10, max_num = None, need_double_check=False, with_prior_judge=False, auto_merge=True, port='7100'):
+def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-7-sonnet-20250219", num_threads = 10, max_num = None, need_double_check=False, with_prior_judge=False, auto_merge=True, server_addr='127.0.0.1', port='7100'):
     """
     Generate inner monologue with multi-threading support.
     
@@ -385,7 +393,7 @@ def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-
         futures = []
         for task in tasks:  
             task_id = task['task_id']        
-            futures.append(executor.submit(process_traj, task, task_id, output_dir, image_folder, model, port, need_double_check, with_prior_judge))
+            futures.append(executor.submit(process_traj, task, task_id, output_dir, image_folder, model, server_addr, port, need_double_check, with_prior_judge))
 
         for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
             _ = future.result()
@@ -411,7 +419,6 @@ def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-
             logger.error(f"❌ Failed to merge results: {str(e)}")
             logger.info("You can manually merge results later using merge_json.py")
 
-
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Generate Inner Monologue")
@@ -427,6 +434,7 @@ def main():
     parser.add_argument("--max_num", type=int, default=None, help="Maximum number of tasks to process")
     parser.add_argument("--no_auto_merge", action='store_true', help="Disable automatic merging of results")
     parser.add_argument("--timestamp", type=str)
+    parser.add_argument("--server_addr", type=str, default='127.0.0.1')
     parser.add_argument("--port", type=str, default='7100')
     
     args = parser.parse_args()
@@ -442,6 +450,12 @@ def main():
     
     gen_inner_monologue_mt(**kwargs)
 
+def get_timestamp():
+    datetime.datetime.today()
+    datetime.datetime.now() 
+
+    now = datetime.datetime.now()
+    return now.strftime("%Y-%m-%d_%H-%M-%S")
 
 if __name__ == "__main__":
     main()

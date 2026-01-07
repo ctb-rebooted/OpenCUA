@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from utils import image_to_base64, call_llm
+from utils import image_to_base64, call_docenty_opencua, call_llm
 import backoff
 import orjson
 
@@ -198,11 +198,12 @@ def build_reflection_messages(
     jitter=backoff.full_jitter,  # Add jitter to spread out retry attempts
 )
 def gen_reflection_thought(
-        client, 
+        client,
         model: str,
         goal: str, 
         history_steps: str, 
         current_step: dict, 
+        port: str,
         image, 
         image_patch=None, 
         next_image=None
@@ -225,6 +226,8 @@ def gen_reflection_thought(
 
     response_str = call_llm(client, messages=reflection_messages, model=model, temperature=0)
     print("\nReflection Thought:")
+    # response_str, response_org = call_docenty_opencua(messages=reflection_messages, model=model, port=port)
+    # print("\nReflection Thought in reflector.py:")
     print(response_str)
 
     # If the response contains a ```json block, extract the JSON content

@@ -399,15 +399,27 @@ Respond in strict accordance with the required format:
 def parse_generator_response(input_string):
     sections = {}
 
-    obs_match = re.search(r'## Observation:?\s*(.*?)(?=\n##\s*Thought:)', input_string, re.DOTALL | re.IGNORECASE)
+    obs_match = re.search(
+        r'(?:\*\*|\#{1,2})\s*Observation\s*:?\s*(.*?)'
+        r'(?:\*\*|\#{1,2})\s*Thought\s*:?\s*(.*?)',
+        input_string,
+        re.DOTALL | re.IGNORECASE
+    )
     if obs_match and obs_match.group(1).strip():
         sections['observation'] = obs_match.group(1).strip()
 
-    thought_match = re.search(r'## Thought:?\s*(.*?)(?=\n##\s*Action:)', input_string, re.DOTALL | re.IGNORECASE)
+    thought_match = re.search(
+        r'(?:\*\*|\#{1,2})\s*Thought\s*:?\s*(.*?)'
+        r'(?:\*\*|\#{1,2})\s*Action\s*:?\s*(.*?)',
+        input_string,
+        re.DOTALL | re.IGNORECASE
+    )
     if thought_match and thought_match.group(1).strip():
         sections['thought'] = thought_match.group(1).strip()
 
-    action_match = re.search(r'## Action:?\s*(.*)', input_string, re.DOTALL | re.IGNORECASE)
+    action_match = re.search(
+        r'(?:\*\*|\#{1,2})\s*Action\s*:?\s*(.*)',
+        input_string, re.DOTALL | re.IGNORECASE)
     if action_match and action_match.group(1).strip():
         sections['action'] = action_match.group(1).strip()
 
