@@ -9,6 +9,11 @@ class ReflectionResult(BaseModel):
     last_step_redundant: bool = Field(description="Whether the previous step was redundant.")
     reflection: str = Field(description="Reflection on the previous step's outcome and the current state.")
 
+class SimpleReflectionResult(BaseModel):
+    """Represents the assessment of the previous step."""
+    this_step_unnecessary: bool = Field(description="Whether the previous step was unncessary.")
+    reflection: str = Field(description="Reflection on the previous step's outcome and the current state.")
+
 
 TRANSIT_REFLECTION_WITH_IMAGE_PATCH_FORMAT_PROMPT = """You are an judge of a computer-use agent. You will be given a task, the agent's history actions, agent last action and thought process with 2 full screenshots and 1 image patch of the first screenshot.
 - Thought is the reasoning for the history steps and prediction for the next step.
@@ -159,8 +164,11 @@ You are an judge of a computer-use agent. You will be given a task, the agent's 
 ## Code:
 {next_code}
 
-You should respond if the this step is unnecessary:
+Your response should include 2 parts:
+1. Is the this step unnecessary:
     - If the this step is doing unnecessary action or action that is not related to the task, for example, clicking irrelevant places, open irrelevant applications, or unnecessary scrolls, you should mark it as unnecessary.
+2. Reflection:
+    - If this step is unnecessary, you should explain why.
 """
 
 REFLECTION_FORMAT_PROMPT = """YOUR RESPONSE MUST BE EXACTLY ONE VALID JSON OBJECT. NO MARKDOWN, NO EXTRA TEXT.
@@ -180,6 +188,7 @@ Here is the exact JSON structure you must follow:
 
 {
     "this_step_unnecessary": bool,  // true or false
+    "reflection": str
 }
 """
 
@@ -346,12 +355,12 @@ def gen_reflection_thought_simple(
         next_step=next_step
     )
 
-    response_str = call_custom_llm(messages=reflection_messages, model=model, server_addr=server_addr, port=port)
+    response_content, response_obj = call_custom_llm(messages=reflection_messages, model=model, server_addr=server_addr, port=port)
 
     # If the response contains a ```json block, extract the JSON content
-    if "```json" in response_str:
-        response_str = response_str.split("```json")[1].split("```")[0].strip()
+    if "```json" in response_content:
+        response_content = response_content.split("```json")[1].split("```")[0].strip()
 
-    parsed_data = orjson.loads(response_str)
-    ReflectionResult.model_validate(parsed_data)
+    parsed_data = orjson.loads(response_content)
+    SimpleReflectionResult.model_validate(parsed_data)
     return parsed_data

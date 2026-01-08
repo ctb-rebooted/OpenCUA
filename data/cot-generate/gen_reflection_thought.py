@@ -4,10 +4,9 @@ import traceback
 import datetime 
 import backoff
 from dotenv import load_dotenv
+from module.reflector import gen_reflection_thought_simple
 
 load_dotenv()
-
-from module.reflector import gen_reflection_thought_simple
 
 def generate_all_history(previous_steps):
     previous_actions = [step['value']['action'] for step in previous_steps]
@@ -37,7 +36,6 @@ def generate_reflection_thought_batch(
     ) -> dict:
 
     try:
-
         # 1. task 전체 내용을 읽어 온다
         # 2. 각 step 별로 reflection thought 를 생성한다.
         json_file_list = os.listdir(vlm_output_dir)    
@@ -67,7 +65,7 @@ def generate_reflection_thought_batch(
             history_steps = generate_all_history(previous_steps)
             
 
-            previous_steps.append(this_step_data['value'])
+            previous_steps.append(this_step_data)
 
             reflect_response = gen_reflection_thought_simple(
                 model=model,
@@ -80,6 +78,7 @@ def generate_reflection_thought_batch(
             )
 
             this_step_data['value']['this_step_unnecessary'] = reflect_response['this_step_unnecessary']
+            this_step_data['value']['reflection'] = reflect_response['reflection']
 
             with open(os.path.join(vlm_output_dir, this_step), 'w') as f: 
                 json.dump(this_step_data, f, indent=4)
@@ -97,25 +96,14 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Generate Inner Monologue")
     parser.add_argument("--vlm_output_dir", type=str, default="./gen_cot_example/output/tasks", help="Directory for generated files from VLM")
-    parser.add_argument("--model", type=str, default="claude-3-7-sonnet-20250219", help="Model to use for LLM calls")
-    parser.add_argument("--timestamp", type=str)
+    parser.add_argument("--model", type=str, default="SmolLM3-3B", help="Model to use for LLM calls")
+    parser.add_argument("--timestamp", type=str, default=None)
     parser.add_argument("--server_addr", type=str, default='127.0.0.1')
     parser.add_argument("--port", type=str, default='7100')
     
     args = parser.parse_args()
-
-    # Convert args to dict and call the function
-    kwargs = dict(args._get_kwargs())
-    kwargs['auto_merge'] = not kwargs.pop('no_auto_merge')  # Invert the flag
-    
+    kwargs = dict(args._get_kwargs())    
     generate_reflection_thought_batch(**kwargs)
-
-def get_timestamp():
-    datetime.datetime.today()
-    datetime.datetime.now() 
-
-    now = datetime.datetime.now()
-    return now.strftime("%Y-%m-%d_%H-%M-%S")
 
 if __name__ == "__main__":
     main()
