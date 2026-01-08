@@ -20,7 +20,9 @@ from utils import (
     draw_bounding_box_and_crop_patch,
     call_llm,
     call_docenty_opencua,
+    call_formatting_llm
     )
+
 from module.evaluator import (
     TRAJECTORY_EVAL_FORMAT_PROMPT, 
     FINAL_TRAJECTORY_EVAL_PROMPT,
@@ -33,7 +35,8 @@ from module.generator import (
     REFLECT_COT_GENERATOR_PROMPT_FOR_MOUSE_ACTION,
     REFLECT_COT_GENERATOR_PROMPT_FOR_KEYBOARD_ACTION,
     parse_generator_response,
-    DOUBLE_CHECK_PROMPT
+    DOUBLE_CHECK_PROMPT,
+    FORMATTING_PROMPT
 )
 
 from module.reflector_with_prior_judge import gen_reflection_thought_with_prior_judge
@@ -73,6 +76,8 @@ def generate_cot(
     need_double_check: bool = False,
     with_prior_judge: bool = False,
     skip_reflection: bool = False,
+    f_addr:str=None,
+    f_port:str=None
     ) -> dict:
 
     try:
@@ -130,20 +135,16 @@ def generate_cot(
         if need_double_check:
             messages=[
                     {
-                        "role": "user",
-                        "content": content,
+                        "role": "system",
+                        "content": FORMATTING_PROMPT, 
                     },
                     {
                         "role": "assistant",
                         "content": response, 
                     },
-                    {
-                        "role": "user",
-                        "content": DOUBLE_CHECK_PROMPT, 
-                    }
                 ]
             logger.info(f"Calling Double Check")
-            response, response_org = call_docenty_opencua(messages, model=model, server_addr=server_addr, port=port)
+            response, response_org = call_formatting_llm(messages, server_addr=f_addr, port=f_port)
 
             logger.info(f"Double Check Response: {response}")
 
@@ -249,7 +250,18 @@ def generate_traj_eval(generated_steps, goal, client, model, server_addr, port):
         raise
 
 
-def process_traj(task, task_id, output_dir, image_folder, model:str, server_addr:str, port:str, need_double_check=False, with_prior_judge=False):
+def process_traj(task, 
+                 task_id, 
+                 output_dir, 
+                 image_folder, 
+                 model:str, 
+                 server_addr:str, 
+                 port:str, 
+                 need_double_check=False, 
+                 with_prior_judge=False,
+                 f_addr:str=None,
+                 f_port:str=None
+                 ):
     if "claude" in model.lower():
         base_url = "https://api.anthropic.com/v1/"
     elif "gpt" in model.lower():
@@ -314,6 +326,8 @@ def process_traj(task, task_id, output_dir, image_folder, model:str, server_addr
                 need_double_check=need_double_check,
                 with_prior_judge=with_prior_judge,
                 skip_reflection= True if i == len(trajectory)-1 else False,
+                f_addr=f_addr,
+                f_port=f_port 
                 )
         
             result = {
@@ -346,7 +360,7 @@ def process_traj(task, task_id, output_dir, image_folder, model:str, server_addr
 
 # 在 gen_cot.py 文件末尾的 gen_inner_monologue_mt 函数中添加合并调用
 
-def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-7-sonnet-20250219", num_threads = 10, max_num = None, need_double_check=False, with_prior_judge=False, auto_merge=True, server_addr='127.0.0.1', port='7100'):
+def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-7-sonnet-20250219", num_threads = 10, max_num = None, need_double_check=False, with_prior_judge=False, auto_merge=True, server_addr='127.0.0.1', port='7100', f_addr='127.0.0.1', f_port='7910'):
     """
     Generate inner monologue with multi-threading support.
     
@@ -393,7 +407,7 @@ def gen_inner_monologue_mt(image_folder, traj_path, output_dir, model="claude-3-
         futures = []
         for task in tasks:  
             task_id = task['task_id']        
-            futures.append(executor.submit(process_traj, task, task_id, output_dir, image_folder, model, server_addr, port, need_double_check, with_prior_judge))
+            futures.append(executor.submit(process_traj, task, task_id, output_dir, image_folder, model, server_addr, port, need_double_check, with_prior_judge, f_addr, f_port))
 
         for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
             _ = future.result()
@@ -436,6 +450,8 @@ def main():
     parser.add_argument("--timestamp", type=str)
     parser.add_argument("--server_addr", type=str, default='127.0.0.1')
     parser.add_argument("--port", type=str, default='7100')
+    parser.add_argument("--f_addr", type=str, default='127.0.0.1')
+    parser.add_argument("--f_port", type=str, default='7910')
     
     args = parser.parse_args()
 

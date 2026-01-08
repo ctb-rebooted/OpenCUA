@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from utils import image_to_base64, call_docenty_opencua, call_llm
+from utils import image_to_base64, call_custom_llm, call_llm
 import backoff
 import orjson
 
@@ -130,6 +130,39 @@ Your response should include 3 parts:
     - If the last step is incorrect, you should then provide a clear explanation of the error.
 """
 
+SIMPLE_REFLECTION_FORMAT_PROMPT = """
+You are an judge of a computer-use agent. You will be given a task, the agent's history actions, (thought, action, code) which agent interpreted of this step , and (thought, action, code) which agent interpreted of next step.
+
+- Thought is the reasoning for the history steps and prediction for the next step.
+- Action is the summary of the code
+- Code is the code that will be executed.
+
+# Task:
+{goal}
+
+# History steps:
+{history_steps}
+
+# This step:
+## Thought:
+{thought}
+## Action:
+{action}
+## Code:
+{code}
+
+# Next step:
+## Thought:
+{next_thought}
+## Action:
+{next_action}
+## Code:
+{next_code}
+
+You should respond if the this step is unnecessary:
+    - If the this step is doing unnecessary action or action that is not related to the task, for example, clicking irrelevant places, open irrelevant applications, or unnecessary scrolls, you should mark it as unnecessary.
+"""
+
 REFLECTION_FORMAT_PROMPT = """YOUR RESPONSE MUST BE EXACTLY ONE VALID JSON OBJECT. NO MARKDOWN, NO EXTRA TEXT.
 
 Here is the exact JSON structure you must follow:
@@ -140,6 +173,16 @@ Here is the exact JSON structure you must follow:
     "reflection": str
 }
 """
+
+REFLECT_UNNECESSARY_PROMPT = """YOUR RESPONSE MUST BE EXACTLY ONE VALID JSON OBJECT. NO MARKDOWN, NO EXTRA TEXT.
+
+Here is the exact JSON structure you must follow:
+
+{
+    "this_step_unnecessary": bool,  // true or false
+}
+"""
+
 
 def build_reflection_messages(
     task: str, 
@@ -190,6 +233,40 @@ def build_reflection_messages(
 
     return messages
 
+def build_reflection_messages_simple(
+    task: str, 
+    history_steps: str, 
+    current_step: dict, 
+    next_step: dict
+    ) -> list:
+
+    content = list()
+    prompt_template = SIMPLE_REFLECTION_FORMAT_PROMPT
+    
+    content.append({
+        "type": "text", 
+        "text": 
+        prompt_template.format(
+            goal = task,
+            history_steps = history_steps,
+            thought = current_step["thought"],
+            action = current_step["action"],
+            code = current_step["code"],
+            next_thought = next_step["thought"],
+            next_action = next_step["action"],
+            next_code = next_step["code"]
+            )+"\n\n"+REFLECT_UNNECESSARY_PROMPT}
+    )
+
+    messages = [
+        {
+            "role": "user",
+            "content": content
+        }
+    ]
+
+    return messages
+
 @backoff.on_exception(
     backoff.expo,
     (Exception),
@@ -229,6 +306,47 @@ def gen_reflection_thought(
     # response_str, response_org = call_docenty_opencua(messages=reflection_messages, model=model, port=port)
     # print("\nReflection Thought in reflector.py:")
     print(response_str)
+
+    # If the response contains a ```json block, extract the JSON content
+    if "```json" in response_str:
+        response_str = response_str.split("```json")[1].split("```")[0].strip()
+
+    parsed_data = orjson.loads(response_str)
+    ReflectionResult.model_validate(parsed_data)
+    return parsed_data
+
+
+@backoff.on_exception(
+    backoff.expo,
+    (Exception),
+    max_time=180,  # Increase max_time to allow more retries
+    max_tries=2,  # Limit the number of retries to prevent infinite loops
+    jitter=backoff.full_jitter,  # Add jitter to spread out retry attempts
+)
+def gen_reflection_thought_simple(
+        model: str,
+        goal: str, 
+        history_steps: str, 
+        current_step: dict, 
+        next_step: dict,
+        server_addr: str,
+        port: str,
+    ) -> dict:
+    """
+    Parse a structured LLM response containing JSON code blocks. If the response
+    includes a ```json ... ``` fenced block, extract only that content. Otherwise
+    parse the entire string.
+
+    Returns a dict that must conform to ReflectionResult's schema.
+    """
+    reflection_messages = build_reflection_messages_simple(
+        task=goal,
+        history_steps=history_steps,
+        current_step=current_step,
+        next_step=next_step
+    )
+
+    response_str = call_custom_llm(messages=reflection_messages, model=model, server_addr=server_addr, port=port)
 
     # If the response contains a ```json block, extract the JSON content
     if "```json" in response_str:

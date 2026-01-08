@@ -123,7 +123,6 @@ def call_llm(
         logger.exception(f"Retrying... Error calling LLM: {str(e)}")
         raise
 
-
 @backoff.on_exception(
     backoff.expo,
     (httpx.HTTPError, httpx.TimeoutException, httpx.ConnectError),
@@ -131,7 +130,7 @@ def call_llm(
     max_time=300,
     jitter=backoff.full_jitter,  # Add jitter to spread out retry attempts
     )
-def call_docenty_opencua(messages, model:str, server_addr:str, port:str):
+def call_custom_llm(messages, model:str, server_addr:str, port:str):
 
     payload = {
         "model": model,
@@ -148,8 +147,7 @@ def call_docenty_opencua(messages, model:str, server_addr:str, port:str):
 
     url = f"http://{server_addr}:{port}/v1/chat/completions"
 
-
-    logger.info("Debugging messages")
+    logger.info("Debugging Formatted messages")
     current_datetime = datetime.datetime.now()
     dir_path = os.path.join('model_log', model)
     os.makedirs(dir_path, exist_ok=True)
@@ -167,7 +165,7 @@ def call_docenty_opencua(messages, model:str, server_addr:str, port:str):
         )            
         
         if response.status_code != 200:
-            error_msg = f"Failed to call VLM server: {response.status_code} - {response.text}"
+            error_msg = f"Failed to call LLM server: {response.status_code} - {response.text}"
             logger.error(error_msg)
             response.raise_for_status()
         

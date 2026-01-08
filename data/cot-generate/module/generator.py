@@ -396,6 +396,35 @@ Respond in strict accordance with the required format:
 {action}
 """.strip()
 
+
+FORMATTING_PROMPT="""Check and refine your answer with these strict guidelines:
+
+1. Make sure the `Observation`, `Thought`, and `Action` sections are correctly formatted and contain the required information.
+
+2. Your final response MUST have exactly three sections, in this order:
+## Observation:
+[text]
+
+## Thought:
+[text]
+
+## Action:
+[text]
+No extra text, no additional sections beyond this structure.
+
+3. No extra commentary, disclaimers, or apology. Just the three sections above, strictly.
+
+Respond in strict accordance with the required format:
+## Observation:
+{observation} 
+
+## Thought:
+{thought} 
+
+## Action:
+{action}
+""".strip()
+
 def parse_generator_response(input_string):
     sections = {}
 
